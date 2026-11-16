@@ -1,0 +1,36 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.obdwidget'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.obdwidget"
+        minSdk 19
+        targetSdk 34
+        versionCode 3
+        versionName "1.2-multi"
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+}
+
+dependencies {
+    // Intentionally no AndroidX: keeps the APK small and works on API 19.
+}

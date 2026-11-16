@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">OBD Widget</string>
+    <string name="settings_title">Настройки OBD Widget</string>
+    <string name="widget_default_label">ОЖ</string>
+    <string name="widget_default_value">--</string>
+
+    <string name="label_param">Параметры на виджете</string>
+    <string name="param_hint">Отметьте сколько нужно. Помещается до 6 строк; шрифт подстраивается под размер виджета.</string>
+    <string name="preview_multi">Виджет покажет параметров: %1$d — %2$s</string>
+    <string name="label_interval">Интервал обновления, сек (2–300)</string>
+    <string name="label_adapter">Адаптер ELM327</string>
+    <string name="hint_interval">5</string>
+    <string name="adapter_auto">Автоопределение</string>
+
+    <string name="label_fuel_model">Модель расхода</string>
+    <string name="fuel_model_hint">Только для «Топливо за поездку»: объём двигателя и поправка расхода.</string>
+    <string name="hint_displacement">Объём, л</string>
+    <string name="hint_correction">Поправка, %</string>
+    <string name="btn_reset_trip">Сбросить счётчик поездки</string>
+    <string name="trip_reset_done">Счётчик поездки сброшен</string>
+
+    <string name="btn_save">Сохранить</string>
+    <string name="btn_test">Тест</string>
+    <string name="btn_cancel">Отмена</string>
+
+    <string name="saved">Настройки сохранены</string>
+    <string name="preview_fmt">Виджет покажет: %1$s (PID 01%2$s), обновление каждые %3$d с.</string>
+    <string name="preview_trip">Виджет покажет: израсходовано топлива с момента запуска двигателя (л) и текущий расход (л/ч) под ним.</string>
+
+    <!-- Diagnostics -->
+    <string name="label_debug">Диагностика</string>
+    <string name="debug_hint">Запустите самотест при включённом зажигании и подключённом к разъёму OBD-II адаптере. В журнале ниже фиксируется каждый шаг Bluetooth и каждая AT-команда.</string>
+    <string name="btn_diag">Самотест</string>
+    <string name="btn_scan">Сканировать PID</string>
+    <string name="btn_copy">Копировать</string>
+    <string name="btn_clear">Очистить</string>
+    <string name="diag_busy">Самотест уже выполняется…</string>
+    <string name="diag_copied">Журнал скопирован в буфер обмена</string>
+    <string name="diag_empty">Журнал пуст. Нажмите «Самотест».</string>
+    <string name="perm_needed">На Android 12+ нужно разрешение Bluetooth. Нажмите «Самотест» и разрешите доступ.</string>
+    <!-- Строка состояния виджета -->
+    <string name="status_perm">Разрешение</string>
+    <string name="status_no_bt">Нет Bluetooth</string>
+    <string name="status_bt_off">Bluetooth выкл.</string>
+    <string name="status_no_adapter">Нет ELM327</string>
+    <string name="status_no_data">Нет данных</string>
+    <string name="status_connect_failed">Нет связи</string>
+    <string name="status_link_error">Ошибка связи</string>
+    <string name="status_internal">Ошибка</string>
+
+    <string name="unit_sec">с</string>
+    <string name="unit_min">мин</string>
+    <string name="unit_hour">ч</string>
+    <string name="age_never">никогда</string>
+</resources>

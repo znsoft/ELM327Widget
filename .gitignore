@@ -1,0 +1,22 @@
+# Gradle / Android build output
+.gradle/
+build/
+app/build/
+local.properties
+captures/
+.externalNativeBuild/
+.cxx/
+
+# IDE
+.idea/
+*.iml
+.DS_Store
+
+# Signing material must never be committed
+*.jks
+*.keystore
+keystore.properties
+
+# APKs are built, not stored
+*.apk
+*.aab

@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">OBD Widget</string>
+    <string name="settings_title">OBD Widget settings</string>
+    <string name="widget_default_label">Coolant</string>
+    <string name="widget_default_value">--</string>
+
+    <string name="label_param">Parameters on the widget</string>
+    <string name="param_hint">Tick as many as you like. Up to 6 rows fit; the text scales to the widget size.</string>
+    <string name="preview_multi">Widget will show %1$d parameter(s): %2$s</string>
+    <string name="label_interval">Update interval, seconds (2–300)</string>
+    <string name="label_adapter">ELM327 adapter</string>
+    <string name="hint_interval">5</string>
+    <string name="adapter_auto">Auto-detect</string>
+
+    <string name="label_fuel_model">Fuel model</string>
+    <string name="fuel_model_hint">Only for “Trip fuel used”: engine size and flow correction.</string>
+    <string name="hint_displacement">Engine, L</string>
+    <string name="hint_correction">Correction, %</string>
+    <string name="btn_reset_trip">Reset trip counter</string>
+    <string name="trip_reset_done">Trip counter reset</string>
+
+    <string name="btn_save">Save</string>
+    <string name="btn_test">Test</string>
+    <string name="btn_cancel">Cancel</string>
+
+    <string name="saved">Settings saved</string>
+    <string name="preview_fmt">Widget will show: %1$s (PID 01%2$s), refreshed every %3$d s.</string>
+    <string name="preview_trip">Widget will show: fuel burned since engine start (litres) with the current flow in L/h under it.</string>
+
+    <!-- Diagnostics -->
+    <string name="label_debug">Diagnostics</string>
+    <string name="debug_hint">Run the self-test with the engine running and the adapter plugged into the OBD-II port. The log below records every Bluetooth and AT command step.</string>
+    <string name="btn_diag">Run self-test</string>
+    <string name="btn_scan">Scan PIDs</string>
+    <string name="btn_copy">Copy log</string>
+    <string name="btn_clear">Clear log</string>
+    <string name="diag_busy">Self-test already running…</string>
+    <string name="diag_copied">Log copied to clipboard</string>
+    <string name="diag_empty">No log yet. Tap “Run self-test”.</string>
+    <string name="perm_needed">Bluetooth permission is required on Android 12+. Tap “Run self-test” and grant it.</string>
+    <!-- Widget status line -->
+    <string name="status_perm">Permission</string>
+    <string name="status_no_bt">No Bluetooth</string>
+    <string name="status_bt_off">Bluetooth off</string>
+    <string name="status_no_adapter">No ELM327</string>
+    <string name="status_no_data">No data</string>
+    <string name="status_connect_failed">No link</string>
+    <string name="status_link_error">Link error</string>
+    <string name="status_internal">Error</string>
+
+    <string name="unit_sec">s</string>
+    <string name="unit_min">min</string>
+    <string name="unit_hour">h</string>
+    <string name="age_never">never</string>
+</resources>
