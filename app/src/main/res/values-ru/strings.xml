@@ -53,4 +53,10 @@
     <string name="unit_min">мин</string>
     <string name="unit_hour">ч</string>
     <string name="age_never">никогда</string>
+
+    <!-- Уведомление foreground-сервиса -->
+    <string name="notif_channel">Опрос OBD</string>
+    <string name="notif_channel_desc">Держит виджет актуальным, пока приложение свёрнуто.</string>
+    <string name="notif_starting">Чтение данных…</string>
+    <string name="notif_stop">Остановить</string>
 </resources>

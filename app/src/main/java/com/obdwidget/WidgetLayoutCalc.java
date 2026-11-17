@@ -73,4 +73,21 @@ final class WidgetLayoutCalc {
         }
         return sp;
     }
+
+    /**
+     * Caps the value font so a wide number cannot squeeze the label out of a
+     * narrow widget: about 55% of the width is reserved for the number, and the
+     * average glyph is roughly 0.62 em wide.
+     */
+    static float fitValueSp(float valueSp, int widthDp, int maxChars) {
+        if (maxChars <= 1) {
+            return valueSp;
+        }
+        float budget = Math.max(40f, widthDp) * 0.55f;
+        float limit = budget / (maxChars * 0.62f);
+        if (limit < 9f) {
+            limit = 9f;
+        }
+        return Math.min(valueSp, limit);
+    }
 }

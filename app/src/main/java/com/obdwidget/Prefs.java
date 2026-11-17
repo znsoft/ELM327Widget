@@ -26,6 +26,8 @@ public final class Prefs {
 
     /** Consecutive failed polls, used to back off while the adapter is away. */
     private static final String KEY_FAILURES = "consecutive_failures";
+    /** Last status line, kept visible while a new reading is in flight. */
+    private static final String KEY_LAST_STATUS = "last_status";
 
     /** Trip fuel: engine size for the airflow model, calibration, accumulator. */
     private static final String KEY_ENGINE_L = "engine_displacement_l";
@@ -160,6 +162,14 @@ public final class Prefs {
 
     public static void setFailures(Context ctx, int count) {
         get(ctx).edit().putInt(KEY_FAILURES, Math.max(0, count)).apply();
+    }
+
+    public static String getLastStatus(Context ctx) {
+        return get(ctx).getString(KEY_LAST_STATUS, "");
+    }
+
+    public static void setLastStatus(Context ctx, String status) {
+        get(ctx).edit().putString(KEY_LAST_STATUS, status == null ? "" : status).apply();
     }
 
     // ---- Trip fuel --------------------------------------------------------

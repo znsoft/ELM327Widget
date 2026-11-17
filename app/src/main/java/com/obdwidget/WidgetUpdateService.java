@@ -1,6 +1,10 @@
 package com.obdwidget;
 
 import android.Manifest;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.app.Service;
 import android.appwidget.AppWidgetManager;
 import android.bluetooth.BluetoothAdapter;
@@ -17,71 +21,98 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * Polls all selected parameters and pushes them into the home-screen widget.
+ * Foreground polling service.
  *
- * The widget shows freshness through brightness:
- * <ul>
- *   <li>dims while a new reading is in flight;</li>
- *   <li>returns to full brightness as soon as values arrive;</li>
- *   <li>fades step by step when readings stop, so an old number never looks
- *       live.</li>
- * </ul>
- *
- * A plain Service: Android 4.4 has no foreground-service restrictions and the
- * work is short. Diagnostics go to {@link Diag}.
+ * Android 8+ forbids starting a background service from an alarm broadcast, and
+ * from Android 12 the app is only briefly allow-listed after being visible. A
+ * plain alarm -> service chain therefore dies a minute after the app leaves the
+ * screen, which looked like a frozen widget. This service instead runs one
+ * continuous loop while it is in the foreground, so polling keeps working with
+ * the app in the background.
  */
 public class WidgetUpdateService extends Service {
 
     public static final String ACTION_REFRESH = "com.obdwidget.ACTION_REFRESH";
+    public static final String ACTION_STOP = "com.obdwidget.ACTION_STOP";
 
+    private static final int NOTIF_ID = 4711;
+    private static final String CHANNEL_ID = "obd_poll";
     /** Back-off cap while the adapter is unreachable, to spare the battery. */
     private static final long MAX_RETRY_DELAY_MS = 30000L;
-    /** If a previous update never finished, allow a new one after this long. */
-    private static final long STUCK_TIMEOUT_MS = 120000L;
 
-    private static volatile boolean running;
-    private static volatile long runningSince;
+    private static volatile boolean loopRequested;
+
+    private Thread worker;
+    private final Object sleeper = new Object();
+    private volatile int lastResultCount;
 
     public static void requestRefresh(Context ctx) {
         Intent i = new Intent(ctx, WidgetUpdateService.class);
         i.setAction(ACTION_REFRESH);
         try {
+            if (Build.VERSION.SDK_INT >= 26) {
+                ctx.startForegroundService(i);
+            } else {
+                ctx.startService(i);
+            }
+        } catch (RuntimeException e) {
+            // Happens when the system refuses a background start. The widget is
+            // still repainted by the caller, and the user's next tap retries.
+            Diag.log("requestRefresh refused: " + e);
+        }
+    }
+
+    public static void requestStop(Context ctx) {
+        Intent i = new Intent(ctx, WidgetUpdateService.class);
+        i.setAction(ACTION_STOP);
+        try {
             ctx.startService(i);
         } catch (RuntimeException e) {
-            Diag.log("startService failed: " + e);
+            Diag.log("requestStop refused: " + e);
         }
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        long now = System.currentTimeMillis();
-        if (running && now - runningSince < STUCK_TIMEOUT_MS) {
-            Diag.log("update requested while one is still running -> skipped");
+        String action = intent == null ? null : intent.getAction();
+
+        if (ACTION_STOP.equals(action)) {
+            Diag.log("service: stop requested");
+            loopRequested = false;
+            wake();
             return START_NOT_STICKY;
         }
-        if (running) {
-            Diag.log("previous update looked stuck for >"
-                    + (STUCK_TIMEOUT_MS / 1000) + " s -> starting a new one");
-        }
-        running = true;
-        runningSince = now;
-        final Context app = getApplicationContext();
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    updateAll(app);
-                } catch (Throwable t) {
-                    Diag.log("update crashed: " + t);
-                    finishFailure(app, R.string.status_internal, true);
-                } finally {
-                    Diag.flush(app);
-                    running = false;
-                    stopSelf();
-                }
+
+        ensureChannel();
+        if (Build.VERSION.SDK_INT >= 26) {
+            try {
+                startForeground(NOTIF_ID, buildNotification(getString(R.string.notif_starting)));
+            } catch (RuntimeException e) {
+                // The system refused the foreground promotion (background start).
+                // Stop at once: otherwise the 5 s foreground timeout crashes us.
+                Diag.log("startForeground refused: " + e);
+                loopRequested = false;
+                stopSelf();
+                return START_NOT_STICKY;
             }
-        }, "obd-widget-update").start();
-        return START_NOT_STICKY;
+        }
+
+        loopRequested = true;
+        synchronized (this) {
+            if (worker == null || !worker.isAlive()) {
+                worker = new Thread(new Runnable() {
+                    @Override
+                    public void run() {
+                        loop();
+                    }
+                }, "obd-poll");
+                worker.start();
+                Diag.log("service: polling loop started");
+            } else {
+                wake();
+            }
+        }
+        return START_STICKY;
     }
 
     @Override
@@ -89,51 +120,107 @@ public class WidgetUpdateService extends Service {
         return null;
     }
 
-    // ---- The actual work --------------------------------------------------
+    @Override
+    public void onDestroy() {
+        loopRequested = false;
+        wake();
+        super.onDestroy();
+    }
 
-    private void updateAll(Context ctx) {
+    // ---- The loop ---------------------------------------------------------
+
+    private void loop() {
+        Context app = getApplicationContext();
+        try {
+            while (loopRequested) {
+                long delay;
+                try {
+                    delay = cycle(app);
+                } catch (Throwable t) {
+                    Diag.log("poll crashed: " + t);
+                    delay = 5000L;
+                }
+                Diag.flush(app);
+                if (!loopRequested) {
+                    break;
+                }
+                sleepFor(delay);
+            }
+        } finally {
+            Diag.log("service: polling loop stopped");
+            stopForegroundCompat();
+            stopSelf();
+        }
+    }
+
+    private void sleepFor(long ms) {
+        if (ms < 1000L) {
+            ms = 1000L;
+        }
+        synchronized (sleeper) {
+            try {
+                sleeper.wait(ms);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                loopRequested = false;
+            }
+        }
+    }
+
+    private void wake() {
+        synchronized (sleeper) {
+            sleeper.notifyAll();
+        }
+    }
+
+    /** One poll cycle; returns how long to wait before the next one. */
+    private long cycle(Context ctx) {
         Diag.section("widget poll");
         final List<ObdParam> params = Prefs.getSelected(ctx);
+
+        AppWidgetManager mgr = AppWidgetManager.getInstance(ctx);
+        ComponentName cn = new ComponentName(ctx, ObdWidgetProvider.class);
+        int[] ids = mgr.getAppWidgetIds(cn);
+        if (ids == null || ids.length == 0) {
+            Diag.log("service: no widgets left -> stopping");
+            loopRequested = false;
+            return 1000L;
+        }
+
         final long age = ageMs(ctx);
         Diag.logf("params=%d interval=%ds lastAge=%s failures=%d",
                 Integer.valueOf(params.size()), Integer.valueOf(Prefs.getIntervalSec(ctx)),
                 age == Long.MAX_VALUE ? "never" : (age / 1000) + "s",
                 Integer.valueOf(Prefs.getFailures(ctx)));
 
-        // 1. Dim what is on screen while the new reading is on its way.
-        publishStored(ctx, params, "", Fade.READING);
+        // Dim what is on screen while the new reading is on its way; the last
+        // status stays visible so the widget never looks like a blank panel.
+        publishStored(ctx, params, Prefs.getLastStatus(ctx), Fade.READING);
 
         if (!hasBluetoothPermission(ctx)) {
             Diag.log("BLUETOOTH_CONNECT is not granted");
-            finishFailure(ctx, R.string.status_perm, true);
-            return;
+            return failure(ctx, R.string.status_perm, true);
         }
 
         BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
         if (adapter == null) {
             Diag.log("device has no Bluetooth adapter");
-            finishFailure(ctx, R.string.status_no_bt, false);
-            return;
+            return failure(ctx, R.string.status_no_bt, false);
         }
-
         if (Session.isPaused()) {
             Diag.log("poll skipped: a self-test/scan is using the adapter");
             publishStale(ctx, params, null);
-            scheduleNext(ctx, 0);
-            return;
+            return Prefs.getIntervalSec(ctx) * 1000L;
         }
-
         if (!adapter.isEnabled()) {
             Diag.log("Bluetooth is off");
-            finishFailure(ctx, R.string.status_bt_off, true);
-            return;
+            return failure(ctx, R.string.status_bt_off, true);
         }
 
         BluetoothDevice device = Elm327Client.findAdapter(
                 adapter, Prefs.getAdapterAddress(ctx));
         if (device == null) {
-            finishFailure(ctx, R.string.status_no_adapter, true);
-            return;
+            return failure(ctx, R.string.status_no_adapter, true);
         }
 
         String name = deviceLabel(device);
@@ -155,13 +242,33 @@ public class WidgetUpdateService extends Service {
             }
         } catch (IOException e) {
             Diag.log("poll: connect failed: " + e);
-            finishFailure(ctx, R.string.status_connect_failed, true);
+            return failure(ctx, R.string.status_connect_failed, true);
         } catch (RuntimeException e) {
             Diag.log("poll: unexpected error: " + e);
-            finishFailure(ctx, R.string.status_link_error, true);
-        } finally {
-            scheduleNext(ctx, 0);
+            return failure(ctx, R.string.status_link_error, true);
         }
+        return Prefs.getIntervalSec(ctx) * 1000L;
+    }
+
+    private long failure(Context ctx, int reasonRes, boolean count) {
+        List<ObdParam> params = Prefs.getSelected(ctx);
+        if (count) {
+            int fails = Prefs.getFailures(ctx) + 1;
+            Prefs.setFailures(ctx, fails);
+            Diag.logf("failure #%d (%s)", Integer.valueOf(fails),
+                    ctx.getString(reasonRes));
+        }
+        publishStale(ctx, params, ctx.getString(reasonRes));
+
+        long base = Prefs.getIntervalSec(ctx) * 1000L;
+        int fails = Prefs.getFailures(ctx);
+        long delay = base;
+        if (fails > 0) {
+            delay = Math.min(base * Math.min(fails, 6), MAX_RETRY_DELAY_MS);
+        }
+        Diag.logf("next poll in %d ms (failures=%d)", Long.valueOf(delay),
+                Integer.valueOf(fails));
+        return delay;
     }
 
     /** Values read in one cycle plus how many of them are usable. */
@@ -175,17 +282,18 @@ public class WidgetUpdateService extends Service {
         }
     }
 
-    /** Acquires (or reuses) the link and reads every selected parameter. */
     private ReadResult pollSelected(BluetoothDevice device, Context ctx,
                                     List<ObdParam> params) throws IOException {
         Elm327Client client;
         try {
             client = Session.acquire(device);
-            return readAll(client, ctx, params);
-        } catch (IOException first) {
-            Diag.log("poll: first attempt failed (" + first + "), reconnecting once");
-            Session.invalidate();
-            client = Session.acquire(device);
+        } catch (IOException e) {
+            // Retrying the same connect immediately only doubles the wait.
+            Diag.log("poll: cannot open link: " + e);
+            throw e;
+        }
+        // Each PID read already retries twice inside Elm327Client.
+        try {
             return readAll(client, ctx, params);
         } finally {
             Session.touch();
@@ -216,42 +324,37 @@ public class WidgetUpdateService extends Service {
         }
         Diag.logf("poll: %d/%d parameter(s) read", Integer.valueOf(ok),
                 Integer.valueOf(params.size()));
+        lastResultCount = ok;
         return new ReadResult(values, ok);
     }
 
     // ---- Rendering --------------------------------------------------------
 
-    /**
-     * Draws the given values with a status. The numbers keep their brightness
-     * unless {@code alpha} says otherwise.
-     */
     private void publishValues(Context ctx, List<ObdParam> params, String[] values,
                                String status, float alpha) {
         AppWidgetManager mgr = AppWidgetManager.getInstance(ctx);
         ComponentName cn = new ComponentName(ctx, ObdWidgetProvider.class);
         int[] ids = mgr.getAppWidgetIds(cn);
         if (ids == null || ids.length == 0) {
-            Diag.log("publish: no widgets on the home screen");
             return;
         }
         Diag.logf("publish: %d value(s), alpha=%.2f status='%s'",
                 Integer.valueOf(params.size()), Float.valueOf(alpha), status);
+        if (status != null && status.length() > 0) {
+            Prefs.setLastStatus(ctx, status);
+        }
         for (int id : ids) {
             mgr.updateAppWidget(id, ObdWidgetProvider.buildViews(
                     ctx, id, params, values, status, alpha));
         }
+        updateNotification(ctx, status, values, params);
     }
 
-    /** Repaints the persisted values, used for the dim-while-reading state. */
     private void publishStored(Context ctx, List<ObdParam> params, String status,
                                float alpha) {
         publishValues(ctx, params, storedValues(ctx, params), status, alpha);
     }
 
-    /**
-     * Keeps the last values on screen but fades them according to their age and
-     * adds a short "reason · age" line, so a stale number is obvious.
-     */
     private void publishStale(Context ctx, List<ObdParam> params, String reason) {
         long age = ageMs(ctx);
         boolean everRead = Prefs.getLastOkTimestamp(ctx) > 0L;
@@ -278,37 +381,99 @@ public class WidgetUpdateService extends Service {
         return values;
     }
 
-    /** Counts a failed attempt, renders the stale state and reschedules. */
-    private void finishFailure(Context ctx, int reasonRes, boolean countFailure) {
-        List<ObdParam> params = Prefs.getSelected(ctx);
-        if (countFailure) {
-            int fails = Prefs.getFailures(ctx) + 1;
-            Prefs.setFailures(ctx, fails);
-            Diag.logf("failure #%d (%s)", Integer.valueOf(fails),
-                    ctx.getString(reasonRes));
+    // ---- Notification -----------------------------------------------------
+
+    private void ensureChannel() {
+        if (Build.VERSION.SDK_INT < 26) {
+            return;
         }
-        publishStale(ctx, params, ctx.getString(reasonRes));
+        NotificationManager nm =
+                (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        if (nm == null) {
+            return;
+        }
+        NotificationChannel channel = new NotificationChannel(CHANNEL_ID,
+                getString(R.string.notif_channel), NotificationManager.IMPORTANCE_MIN);
+        channel.setDescription(getString(R.string.notif_channel_desc));
+        channel.setShowBadge(false);
+        nm.createNotificationChannel(channel);
     }
 
-    // ---- Scheduling -------------------------------------------------------
+    private Notification buildNotification(String text) {
+        Intent open = new Intent(this, SettingsActivity.class);
+        PendingIntent content = PendingIntent.getActivity(this, 0, open,
+                ObdWidgetProvider.pendingFlags());
 
-    /**
-     * Schedules the next poll. Repeated failures back off up to
-     * {@link #MAX_RETRY_DELAY_MS}, so an absent adapter does not keep the radio
-     * busy every few seconds.
-     */
-    private void scheduleNext(Context ctx, int extraDelayMs) {
-        long base = Prefs.getIntervalSec(ctx) * 1000L;
-        int fails = Prefs.getFailures(ctx);
-        long delay = base;
-        if (fails > 0) {
-            int factor = Math.min(fails, 6);
-            delay = Math.min(base * factor, MAX_RETRY_DELAY_MS);
+        Intent stop = new Intent(this, WidgetUpdateService.class);
+        stop.setAction(ACTION_STOP);
+        PendingIntent stopPi = PendingIntent.getService(this, 1, stop,
+                ObdWidgetProvider.pendingFlags());
+
+        Notification.Builder b;
+        if (Build.VERSION.SDK_INT >= 26) {
+            b = new Notification.Builder(this, CHANNEL_ID);
+        } else {
+            b = new Notification.Builder(this);
         }
-        delay += extraDelayMs;
-        Diag.logf("schedule: next poll in %d ms (failures=%d)", Long.valueOf(delay),
-                Integer.valueOf(fails));
-        ObdWidgetProvider.scheduleNextPoll(ctx, delay);
+        b.setSmallIcon(R.drawable.ic_launcher)
+                .setContentTitle(getString(R.string.app_name))
+                .setContentText(text)
+                .setContentIntent(content)
+                .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .addAction(new Notification.Action.Builder(
+                        0, getString(R.string.notif_stop), stopPi).build());
+        if (Build.VERSION.SDK_INT >= 21) {
+            b.setCategory(Notification.CATEGORY_SERVICE);
+            b.setPriority(Notification.PRIORITY_MIN);
+        }
+        if (Build.VERSION.SDK_INT >= 31) {
+            b.setForegroundServiceBehavior(
+                    Notification.FOREGROUND_SERVICE_IMMEDIATE);
+        }
+        return b.build();
+    }
+
+    private void updateNotification(Context ctx, String status, String[] values,
+                                    List<ObdParam> params) {
+        if (Build.VERSION.SDK_INT < 26) {
+            return;
+        }
+        StringBuilder text = new StringBuilder();
+        for (int i = 0; i < params.size() && i < 3; i++) {
+            if (values != null && i < values.length && values[i] != null) {
+                if (text.length() > 0) {
+                    text.append(" · ");
+                }
+                text.append(values[i]);
+            }
+        }
+        if (status != null && status.length() > 0) {
+            if (text.length() > 0) {
+                text.append("  ");
+            }
+            text.append(status);
+        }
+        if (text.length() == 0) {
+            text.append(getString(R.string.notif_starting));
+        }
+        NotificationManager nm =
+                (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
+        if (nm != null) {
+            nm.notify(NOTIF_ID, buildNotification(text.toString()));
+        }
+    }
+
+    private void stopForegroundCompat() {
+        try {
+            if (Build.VERSION.SDK_INT >= 24) {
+                stopForeground(STOP_FOREGROUND_REMOVE);
+            } else {
+                stopForeground(true);
+            }
+        } catch (RuntimeException ignored) {
+            // Service may already be gone.
+        }
     }
 
     // ---- Helpers ----------------------------------------------------------
@@ -338,9 +503,6 @@ public class WidgetUpdateService extends Service {
     }
 
     private static boolean hasBluetoothPermission(Context ctx) {
-        if (Build.VERSION.SDK_INT < 23) {
-            return true; // install-time permission on Android 4.x/5.x
-        }
         if (Build.VERSION.SDK_INT < 31) {
             return true; // BLUETOOTH / BLUETOOTH_ADMIN are install-time
         }

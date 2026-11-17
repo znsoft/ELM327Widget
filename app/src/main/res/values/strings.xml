@@ -53,4 +53,10 @@
     <string name="unit_min">min</string>
     <string name="unit_hour">h</string>
     <string name="age_never">never</string>
+
+    <!-- Foreground service notification -->
+    <string name="notif_channel">OBD polling</string>
+    <string name="notif_channel_desc">Keeps the widget updated while the app is in the background.</string>
+    <string name="notif_starting">Reading data…</string>
+    <string name="notif_stop">Stop</string>
 </resources>

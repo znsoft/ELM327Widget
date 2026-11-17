@@ -10,8 +10,8 @@ android {
         applicationId "com.obdwidget"
         minSdk 19
         targetSdk 34
-        versionCode 3
-        versionName "1.2-multi"
+        versionCode 4
+        versionName "1.3-fgs"
     }
 
     buildTypes {

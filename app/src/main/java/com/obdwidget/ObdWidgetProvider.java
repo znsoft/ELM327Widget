@@ -1,6 +1,5 @@
 package com.obdwidget;
 
-import android.app.AlarmManager;
 import android.app.PendingIntent;
 import android.appwidget.AppWidgetManager;
 import android.appwidget.AppWidgetProvider;
@@ -24,13 +23,14 @@ import java.util.List;
  * How many are shown and how large the text is depends on the height reported
  * by the launcher, so the widget stays readable when resized.
  *
- * Polling is driven by AlarmManager rather than updatePeriodMillis because the
- * platform minimum for updatePeriodMillis is 30 minutes — far too slow for live
- * engine data.
+ * A Chronometer at the bottom shows how long ago the numbers were refreshed. It
+ * ticks on its own inside the launcher, so even if the polling service is
+ * killed the age keeps counting — a frozen widget is immediately obvious.
+ *
+ * Polling itself lives in {@link WidgetUpdateService}, which runs as a
+ * foreground service because Android reserves background service starts.
  */
 public class ObdWidgetProvider extends AppWidgetProvider {
-
-    private static final int REQUEST_REFRESH = 1001;
 
     private static final int[] ROW_IDS = {
             R.id.row_1, R.id.row_2, R.id.row_3, R.id.row_4, R.id.row_5, R.id.row_6};
@@ -44,8 +44,10 @@ public class ObdWidgetProvider extends AppWidgetProvider {
     @Override
     public void onUpdate(Context context, AppWidgetManager appWidgetManager,
                          int[] appWidgetIds) {
-        // Also called after a reboot or a launcher restart: rebuild everything.
-        restartPipeline(context);
+        // Runs from a broadcast (widget added, launcher restart, reboot), where
+        // Android refuses to start a service. Only repaint; polling resumes on
+        // the user's next tap or from the settings screen.
+        repaintFromStored(context);
     }
 
     @Override
@@ -61,12 +63,9 @@ public class ObdWidgetProvider extends AppWidgetProvider {
         super.onReceive(context, intent);
         String action = intent.getAction();
         if (ACTION_REFRESH.equals(action)) {
-            // Tap on the widget (or "Save" in settings). After a long screen-off
-            // the alarm chain may be dead, so a single refresh request is not
-            // enough: cancel, repaint, re-arm and poll — exactly what Save does.
+            // Tap on the widget (or "Save" in settings): repaint at once and
+            // make sure the polling service is alive.
             restartPipeline(context);
-        } else if (ACTION_TICK.equals(action)) {
-            WidgetUpdateService.requestRefresh(context);
         }
     }
 
@@ -77,21 +76,17 @@ public class ObdWidgetProvider extends AppWidgetProvider {
         ComponentName cn = new ComponentName(context, ObdWidgetProvider.class);
         int[] remaining = mgr.getAppWidgetIds(cn);
         if (remaining == null || remaining.length == 0) {
-            cancelPoll(context);
+            Diag.log("last widget removed -> stopping the polling service");
+            WidgetUpdateService.requestStop(context);
         }
     }
 
     // ---- Restart pipeline -------------------------------------------------
 
-    /**
-     * Fully restarts the widget: drops the stale alarm chain, repaints the
-     * stored values at once, re-arms polling and asks the service to read now.
-     */
+    /** Repaints stored values and asks the polling service to refresh now. */
     public static void restartPipeline(Context context) {
-        Diag.log("restart: cancel alarm -> repaint -> re-arm -> poll");
-        cancelPoll(context);
+        Diag.log("restart: repaint -> ensure poll service");
         repaintFromStored(context);
-        scheduleNextPoll(context, 1000L);
         WidgetUpdateService.requestRefresh(context);
     }
 
@@ -117,7 +112,8 @@ public class ObdWidgetProvider extends AppWidgetProvider {
         }
         for (int id : ids) {
             mgr.updateAppWidget(id,
-                    buildViews(context, id, params, values, "", alpha));
+                    buildViews(context, id, params, values,
+                            Prefs.getLastStatus(context), alpha));
         }
         Diag.logf("restart: repainted %d widget(s), %d parameter(s), alpha=%.2f",
                 Integer.valueOf(ids.length), Integer.valueOf(params.size()),
@@ -141,6 +137,16 @@ public class ObdWidgetProvider extends AppWidgetProvider {
         int[] size = widgetSizeDp(context, widgetId);
         int rows = WidgetLayoutCalc.rowsToShow(params.size(), size[1]);
         float valueSp = WidgetLayoutCalc.valueTextSp(size[1], rows);
+        int maxChars = 1;
+        for (int i = 0; i < params.size() && i < rows; i++) {
+            String v = (values != null && i < values.length && values[i] != null)
+                    ? values[i] : "--";
+            if (v.length() > maxChars) {
+                maxChars = v.length();
+            }
+        }
+        // Keep room for the label: a wide number must not hide it.
+        valueSp = WidgetLayoutCalc.fitValueSp(valueSp, size[0], maxChars);
         float labelSp = WidgetLayoutCalc.labelTextSp(valueSp);
         float statusSp = WidgetLayoutCalc.statusTextSp(valueSp);
         int valueColor = valueColor(alpha);
@@ -165,11 +171,24 @@ public class ObdWidgetProvider extends AppWidgetProvider {
 
         String statusText = status == null ? "" : status;
         if (params.size() > rows) {
-            // More parameters selected than the current widget size can show.
             statusText = statusText.length() == 0
                     ? "+" + (params.size() - rows)
                     : statusText + " · +" + (params.size() - rows);
         }
+
+        // Self-ticking age counter: keeps running even if the service is dead.
+        long ts = Prefs.getLastOkTimestamp(context);
+        if (ts > 0L) {
+            long ageMs = Math.max(0L, System.currentTimeMillis() - ts);
+            long base = SystemClock.elapsedRealtime() - ageMs;
+            views.setChronometer(R.id.widget_age, base, "%s", true);
+            views.setViewVisibility(R.id.widget_age, View.VISIBLE);
+            views.setTextViewTextSize(R.id.widget_age,
+                    TypedValue.COMPLEX_UNIT_SP, statusSp);
+        } else {
+            views.setViewVisibility(R.id.widget_age, View.GONE);
+        }
+
         if (statusText.length() == 0) {
             views.setViewVisibility(R.id.widget_status, View.GONE);
         } else {
@@ -179,10 +198,18 @@ public class ObdWidgetProvider extends AppWidgetProvider {
                     TypedValue.COMPLEX_UNIT_SP, statusSp);
         }
 
-        Intent refresh = new Intent(context, ObdWidgetProvider.class);
-        refresh.setAction(ACTION_REFRESH);
-        PendingIntent pi = PendingIntent.getBroadcast(context, widgetId, refresh,
-                pendingFlags());
+        // A tap starts the polling service directly as a foreground service.
+        // Android allows that for a PendingIntent triggered by the user, while
+        // "receiver -> startForegroundService" was denied with RCVR state.
+        Intent refresh = new Intent(context, WidgetUpdateService.class);
+        refresh.setAction(WidgetUpdateService.ACTION_REFRESH);
+        PendingIntent pi;
+        if (Build.VERSION.SDK_INT >= 26) {
+            pi = PendingIntent.getForegroundService(context, widgetId, refresh,
+                    pendingFlags());
+        } else {
+            pi = PendingIntent.getService(context, widgetId, refresh, pendingFlags());
+        }
         views.setOnClickPendingIntent(R.id.widget_root, pi);
         return views;
     }
@@ -224,45 +251,7 @@ public class ObdWidgetProvider extends AppWidgetProvider {
         return Color.argb(a, 255, 255, 255);
     }
 
-    // ---- Alarm scheduling -------------------------------------------------
+    // ---- Intents ----------------------------------------------------------
 
     public static final String ACTION_REFRESH = "com.obdwidget.ACTION_REFRESH";
-    public static final String ACTION_TICK = "com.obdwidget.ACTION_TICK";
-
-    static void scheduleNextPoll(Context context, long intervalMs) {
-        if (intervalMs < 2000L) {
-            intervalMs = 2000L;
-        }
-        AlarmManager am = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
-        if (am == null) {
-            return;
-        }
-        PendingIntent pi = tickIntent(context);
-        try {
-            if (Build.VERSION.SDK_INT >= 19) {
-                am.setExact(AlarmManager.ELAPSED_REALTIME_WAKEUP,
-                        SystemClock.elapsedRealtime() + intervalMs, pi);
-            } else {
-                am.set(AlarmManager.ELAPSED_REALTIME_WAKEUP,
-                        SystemClock.elapsedRealtime() + intervalMs, pi);
-            }
-        } catch (SecurityException e) {
-            // Without SCHEDULE_EXACT_ALARM (API 31+) fall back to inexact.
-            am.set(AlarmManager.ELAPSED_REALTIME_WAKEUP,
-                    SystemClock.elapsedRealtime() + intervalMs, pi);
-        }
-    }
-
-    static void cancelPoll(Context context) {
-        AlarmManager am = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
-        if (am != null) {
-            am.cancel(tickIntent(context));
-        }
-    }
-
-    private static PendingIntent tickIntent(Context context) {
-        Intent i = new Intent(context, ObdWidgetProvider.class);
-        i.setAction(ACTION_TICK);
-        return PendingIntent.getBroadcast(context, REQUEST_REFRESH, i, pendingFlags());
-    }
 }

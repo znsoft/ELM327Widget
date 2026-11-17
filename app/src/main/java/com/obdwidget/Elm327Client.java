@@ -3,6 +3,7 @@ package com.obdwidget;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothSocket;
+import android.os.Build;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -83,11 +84,6 @@ public final class Elm327Client {
         Diag.logf("findAdapter: %d paired device(s), preferred='%s'",
                 bonded.size(), preferredAddress);
 
-        for (BluetoothDevice d : bonded) {
-            String name = safeName(d);
-            Diag.logf("  paired: %s  [%s]  bond=%d", name, d.getAddress(), d.getBondState());
-        }
-
         if (preferredAddress != null && preferredAddress.length() > 0) {
             for (BluetoothDevice d : bonded) {
                 if (preferredAddress.equalsIgnoreCase(d.getAddress())) {
@@ -97,6 +93,12 @@ public final class Elm327Client {
             }
             Diag.log("findAdapter: configured " + preferredAddress
                     + " is no longer paired, falling back to auto-detect");
+        }
+
+        // Only list everything when auto-detecting: otherwise this spams the log
+        // with a dozen lines on every poll.
+        for (BluetoothDevice d : bonded) {
+            Diag.logf("  paired: %s  [%s]", safeName(d), d.getAddress());
         }
 
         BluetoothDevice fallback = null;
@@ -152,14 +154,16 @@ public final class Elm327Client {
         close();
 
         BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
-        if (adapter != null) {
+        // isDiscovering()/cancelDiscovery() need BLUETOOTH_SCAN on Android 12+,
+        // and we never scan, so only bother with this on older releases.
+        if (adapter != null && Build.VERSION.SDK_INT < 31) {
             try {
                 if (adapter.isDiscovering()) {
                     adapter.cancelDiscovery();
                     Diag.log("connect: cancelled an active discovery (it blocks RFCOMM)");
                 }
             } catch (SecurityException e) {
-                Diag.log("connect: cancelDiscovery denied: " + e);
+                Diag.log("connect: cancelDiscovery denied: " + e.getMessage());
             }
         }
 

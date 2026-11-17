@@ -201,7 +201,7 @@ public class SettingsActivity extends Activity {
                 });
 
         updatePreview();
-        ensureBluetoothPermission();
+        ensureRuntimePermissions();
     }
 
     @Override
@@ -221,15 +221,22 @@ public class SettingsActivity extends Activity {
 
     // ---- Bluetooth permission (Android 12+) -------------------------------
 
-    private void ensureBluetoothPermission() {
-        if (Build.VERSION.SDK_INT < 31) {
-            return; // install-time permissions only
-        }
-        if (checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT)
+    private void ensureRuntimePermissions() {
+        List<String> needed = new ArrayList<String>();
+        if (Build.VERSION.SDK_INT >= 31
+                && checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT)
                 != PackageManager.PERMISSION_GRANTED) {
-            Diag.log("requesting BLUETOOTH_CONNECT runtime permission");
-            requestPermissions(
-                    new String[]{Manifest.permission.BLUETOOTH_CONNECT}, REQ_BT);
+            needed.add(Manifest.permission.BLUETOOTH_CONNECT);
+        }
+        if (Build.VERSION.SDK_INT >= 33
+                && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED) {
+            // Needed so the foreground-service notification is visible.
+            needed.add(Manifest.permission.POST_NOTIFICATIONS);
+        }
+        if (!needed.isEmpty()) {
+            Diag.log("requesting runtime permissions: " + needed);
+            requestPermissions(needed.toArray(new String[needed.size()]), REQ_BT);
         }
     }
 
@@ -242,7 +249,8 @@ public class SettingsActivity extends Activity {
         }
         boolean granted = grantResults != null && grantResults.length > 0
                 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
-        Diag.log("BLUETOOTH_CONNECT granted = " + granted);
+        Diag.log("permission request result: granted=" + granted
+                + " for " + (permissions == null ? "?" : java.util.Arrays.toString(permissions)));
         if (!granted) {
             Toast.makeText(this, R.string.perm_needed, Toast.LENGTH_LONG).show();
         }
