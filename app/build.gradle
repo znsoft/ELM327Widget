@@ -2,21 +2,45 @@ plugins {
     id 'com.android.application'
 }
 
+// Release signing is configured from keystore.properties, which is NOT in git.
+// Generate your own keystore (see README) and keep it backed up: losing it
+// means you can no longer publish updates to the same app listing.
+def keystorePropsFile = rootProject.file('keystore.properties')
+def keystoreProps = new Properties()
+if (keystorePropsFile.exists()) {
+    keystorePropsFile.withInputStream { keystoreProps.load(it) }
+}
+
 android {
     namespace 'com.obdwidget'
-    compileSdk 34
+    compileSdk 36
+    buildToolsVersion "35.0.0"
 
     defaultConfig {
         applicationId "com.obdwidget"
         minSdk 19
-        targetSdk 34
-        versionCode 4
-        versionName "1.3-fgs"
+        targetSdk 36
+        versionCode 6
+        versionName "1.4.0"
+    }
+
+    signingConfigs {
+        if (keystorePropsFile.exists()) {
+            release {
+                storeFile rootProject.file(keystoreProps['storeFile'])
+                storePassword keystoreProps['storePassword']
+                keyAlias keystoreProps['keyAlias']
+                keyPassword keystoreProps['keyPassword']
+            }
+        }
     }
 
     buildTypes {
         release {
             minifyEnabled false
+            if (keystorePropsFile.exists()) {
+                signingConfig signingConfigs.release
+            }
         }
     }
 

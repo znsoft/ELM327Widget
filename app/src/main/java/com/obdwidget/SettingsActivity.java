@@ -18,6 +18,7 @@ import android.text.TextWatcher;
 import android.text.method.ScrollingMovementMethod;
 import android.util.TypedValue;
 import android.view.View;
+import android.view.WindowInsets;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
@@ -93,6 +94,8 @@ public class SettingsActivity extends Activity {
         Diag.restore(this);
 
         setContentView(R.layout.activity_settings);
+
+        applySystemBarInsets();
 
         paramList = (LinearLayout) findViewById(R.id.list_params);
         adapterSpinner = (Spinner) findViewById(R.id.spinner_adapter);
@@ -217,6 +220,29 @@ public class SettingsActivity extends Activity {
         logHandler.removeCallbacks(logTicker);
         Diag.flush(this);
         super.onPause();
+    }
+
+    /**
+     * Android 15+ draws the app edge-to-edge when it targets API 35 or newer.
+     * The layout has no ActionBar, so the scroll content gets the status/nav
+     * bar heights as padding and nothing ends up under the system bars.
+     */
+    private void applySystemBarInsets() {
+        if (Build.VERSION.SDK_INT < 21) {
+            return;
+        }
+        final View root = findViewById(R.id.settings_root);
+        if (root == null) {
+            return;
+        }
+        root.setOnApplyWindowInsetsListener(new View.OnApplyWindowInsetsListener() {
+            @Override
+            public WindowInsets onApplyWindowInsets(View view, WindowInsets insets) {
+                view.setPadding(0, insets.getSystemWindowInsetTop(), 0,
+                        insets.getSystemWindowInsetBottom());
+                return insets;
+            }
+        });
     }
 
     // ---- Bluetooth permission (Android 12+) -------------------------------

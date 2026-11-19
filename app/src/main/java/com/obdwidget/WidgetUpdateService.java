@@ -415,7 +415,7 @@ public class WidgetUpdateService extends Service {
         } else {
             b = new Notification.Builder(this);
         }
-        b.setSmallIcon(R.drawable.ic_launcher)
+        b.setSmallIcon(R.drawable.ic_stat_obd)
                 .setContentTitle(getString(R.string.app_name))
                 .setContentText(text)
                 .setContentIntent(content)
