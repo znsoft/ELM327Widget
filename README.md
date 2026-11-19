@@ -4,6 +4,23 @@
 адаптеру ELM327 по классическому Bluetooth (SPP) и показывает 
 значения OBD-II. По умолчанию — температура охлаждающей жидкости (PID 0105).
 
+## Ветки
+
+- **`rustore`** — эта ветка: сборка для RuStore и старых устройств.
+  `targetSdk 34`, APK, AGP 8.7.2, Gradle 8.11.1, Android 4.4+.
+- **`playmarket`** — сборка для Google Play: `targetSdk 36` (требование Play
+  с 31.08.2026), App Bundle, AGP 8.12.3, Gradle 8.13.
+
+Номер версии общий (1.4.0), различается только конфигурация сборки.
+
+```bat
+git checkout rustore
+gradlew.bat assembleRelease   :: app/build/outputs/apk/release/app-release.apk
+
+git checkout playmarket
+gradlew.bat bundleRelease     :: app/build/outputs/bundle/release/app-release.aab
+```
+
 ## Сборка
 
 ```bat
